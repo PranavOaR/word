@@ -1,0 +1,9 @@
+[package]
+name = "wordmock"
+version = "0.1.0"
+edition = "2024"
+description = "A personal desktop word processor built in Rust"
+
+[dependencies]
+eframe = "0.36.2"
+rfd = "0.15"
