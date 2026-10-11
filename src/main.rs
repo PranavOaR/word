@@ -12,6 +12,8 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "WordMock",
         options,
-        Box::new(|_creation_context| Ok(Box::new(app::WordMockApp::default()))),
+        Box::new(|creation_context| {
+            Ok(Box::new(app::WordMockApp::new(&creation_context.egui_ctx)))
+        }),
     )
 }
