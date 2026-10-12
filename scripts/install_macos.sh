@@ -6,9 +6,10 @@ PROJECT_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 APP_BUNDLE="${HOME}/Applications/WordMock.app"
 
 CARGO_HTTP_MULTIPLEXING=false cargo build --release --manifest-path "$PROJECT_ROOT/Cargo.toml"
-mkdir -p "$APP_BUNDLE/Contents/MacOS"
+mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources/Fonts"
 cp "$PROJECT_ROOT/target/release/wordmock" "$APP_BUNDLE/Contents/MacOS/wordmock"
 cp "$PROJECT_ROOT/packaging/macos/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+cp "$PROJECT_ROOT"/assets/fonts/*.OFL.txt "$APP_BUNDLE/Contents/Resources/Fonts/"
 chmod +x "$APP_BUNDLE/Contents/MacOS/wordmock"
 
 printf 'Installed WordMock to %s\n' "$APP_BUNDLE"
