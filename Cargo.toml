@@ -5,6 +5,7 @@ edition = "2024"
 description = "A personal desktop word processor built in Rust"
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 eframe = "0.36.2"
 rfd = "0.15"
 serde = { version = "1", features = ["derive"] }

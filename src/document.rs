@@ -9,16 +9,29 @@ use serde::{Deserialize, Serialize};
 const MAX_UNDO_STEPS: usize = 100;
 const TYPE_GROUP_DELAY: Duration = Duration::from_millis(700);
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CharacterStyle {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub font_family: Option<String>,
+    pub font_size: Option<f32>,
+    pub color: Option<[u8; 4]>,
+    pub highlight: Option<[u8; 4]>,
+    pub hyperlink: Option<String>,
 }
 
 impl CharacterStyle {
-    pub fn is_plain(self) -> bool {
-        !self.bold && !self.italic && !self.underline
+    pub fn is_plain(&self) -> bool {
+        !self.bold
+            && !self.italic
+            && !self.underline
+            && self.font_family.is_none()
+            && self.font_size.is_none()
+            && self.color.is_none()
+            && self.highlight.is_none()
+            && self.hyperlink.is_none()
     }
 
     pub fn toggle(&mut self, kind: StyleKind) {
@@ -37,12 +50,41 @@ pub enum StyleKind {
     Underline,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FormatSpan {
     /// UTF-8 byte offsets into the document text.
     pub start: usize,
     pub end: usize,
     pub style: CharacterStyle,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageSize {
+    #[default]
+    Letter,
+    A4,
+    Legal,
+}
+
+impl PageSize {
+    pub fn dimensions(self) -> (f32, f32) {
+        match self {
+            Self::Letter => (816.0, 1056.0),
+            Self::A4 => (794.0, 1123.0),
+            Self::Legal => (816.0, 1344.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParagraphAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+    Justify,
 }
 
 #[derive(Debug)]
@@ -52,6 +94,12 @@ pub struct Document {
     pub path: Option<PathBuf>,
     pub dirty: bool,
     pub font_size: f32,
+    pub font_family: String,
+    pub page_size: PageSize,
+    pub landscape: bool,
+    pub margin: f32,
+    pub line_spacing: f32,
+    pub alignment: ParagraphAlignment,
     undo_stack: Vec<DocumentSnapshot>,
     redo_stack: Vec<DocumentSnapshot>,
     last_text_edit: Option<Instant>,
@@ -62,6 +110,12 @@ struct DocumentSnapshot {
     text: String,
     formats: Vec<FormatSpan>,
     font_size: f32,
+    font_family: String,
+    page_size: PageSize,
+    landscape: bool,
+    margin: f32,
+    line_spacing: f32,
+    alignment: ParagraphAlignment,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -70,6 +124,18 @@ struct SavedDocument {
     text: String,
     formats: Vec<FormatSpan>,
     font_size: f32,
+    #[serde(default = "default_font_family")]
+    font_family: String,
+    #[serde(default)]
+    page_size: PageSize,
+    #[serde(default)]
+    landscape: bool,
+    #[serde(default = "default_margin")]
+    margin: f32,
+    #[serde(default = "default_line_spacing")]
+    line_spacing: f32,
+    #[serde(default)]
+    alignment: ParagraphAlignment,
 }
 
 impl Default for Document {
@@ -80,6 +146,12 @@ impl Default for Document {
             path: None,
             dirty: false,
             font_size: 12.0,
+            font_family: default_font_family(),
+            page_size: PageSize::Letter,
+            landscape: false,
+            margin: 76.0,
+            line_spacing: 1.0,
+            alignment: ParagraphAlignment::Left,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             last_text_edit: None,
@@ -137,7 +209,7 @@ impl Document {
         self.formats
             .iter()
             .find(|span| span.start <= byte && byte < span.end)
-            .map_or(CharacterStyle::default(), |span| span.style)
+            .map_or_else(CharacterStyle::default, |span| span.style.clone())
     }
 
     pub fn toggle_style(&mut self, bytes: Range<usize>, kind: StyleKind) {
@@ -147,20 +219,44 @@ impl Document {
         }
 
         let disable = self.has_style(range.clone(), kind);
+        self.update_character_style(range, |style| style.set(kind, !disable));
+    }
+
+    pub fn update_character_style(
+        &mut self,
+        bytes: Range<usize>,
+        mut update: impl FnMut(&mut CharacterStyle),
+    ) {
+        let range = clamp_range_to_char_boundaries(&self.text, bytes);
+        if range.is_empty() {
+            return;
+        }
         self.push_undo_snapshot();
         let mut runs = self.style_runs();
-        for (start, end, style) in &mut runs {
-            if *end <= range.start || *start >= range.end {
+        let mut edited = Vec::with_capacity(runs.len() + 2);
+        for (start, end, mut style) in runs.drain(..) {
+            if end <= range.start || start >= range.end {
+                edited.push((start, end, style));
                 continue;
             }
-            if disable {
-                style.set(kind, false);
-            } else {
-                style.set(kind, true);
+            let selected_start = start.max(range.start);
+            let selected_end = end.min(range.end);
+            if start < selected_start {
+                edited.push((start, selected_start, style.clone()));
+            }
+            let right_style = style.clone();
+            update(&mut style);
+            edited.push((selected_start, selected_end, style));
+            if selected_end < end {
+                edited.push((selected_end, end, right_style));
             }
         }
-        self.formats = spans_from_runs(runs);
+        self.formats = spans_from_runs(edited);
         self.mark_changed();
+    }
+
+    pub fn clear_character_style(&mut self, bytes: Range<usize>) {
+        self.update_character_style(bytes, |style| *style = CharacterStyle::default());
     }
 
     pub fn reconcile_editor_change(&mut self, before: &str, inserted_style: CharacterStyle) {
@@ -188,7 +284,7 @@ impl Document {
                     adjusted.push(FormatSpan {
                         start: span.start,
                         end,
-                        style: span.style,
+                        style: span.style.clone(),
                     });
                 }
             }
@@ -198,7 +294,7 @@ impl Document {
                     adjusted.push(FormatSpan {
                         start: shift_byte(start, delta),
                         end: shift_byte(span.end, delta),
-                        style: span.style,
+                        style: span.style.clone(),
                     });
                 }
             }
@@ -248,12 +344,112 @@ impl Document {
         self.mark_changed();
     }
 
+    pub fn set_font_family(&mut self, font_family: impl Into<String>) {
+        let font_family = font_family.into();
+        if self.font_family == font_family {
+            return;
+        }
+        self.push_undo_snapshot();
+        self.font_family = font_family;
+        self.mark_changed();
+    }
+
+    pub fn set_page_size(&mut self, page_size: PageSize) {
+        if self.page_size == page_size {
+            return;
+        }
+        self.push_undo_snapshot();
+        self.page_size = page_size;
+        self.mark_changed();
+    }
+
+    pub fn set_landscape(&mut self, landscape: bool) {
+        if self.landscape == landscape {
+            return;
+        }
+        self.push_undo_snapshot();
+        self.landscape = landscape;
+        self.mark_changed();
+    }
+
+    pub fn set_margin(&mut self, margin: f32) {
+        let margin = margin.clamp(24.0, 120.0);
+        if (self.margin - margin).abs() < 0.25 {
+            return;
+        }
+        self.push_undo_snapshot();
+        self.margin = margin;
+        self.mark_changed();
+    }
+
+    pub fn set_line_spacing(&mut self, line_spacing: f32) {
+        let line_spacing = line_spacing.clamp(1.0, 2.5);
+        if (self.line_spacing - line_spacing).abs() < 0.01 {
+            return;
+        }
+        self.push_undo_snapshot();
+        self.line_spacing = line_spacing;
+        self.mark_changed();
+    }
+
+    pub fn set_alignment(&mut self, alignment: ParagraphAlignment) {
+        if self.alignment == alignment {
+            return;
+        }
+        self.push_undo_snapshot();
+        self.alignment = alignment;
+        self.mark_changed();
+    }
+
+    pub fn page_dimensions(&self) -> (f32, f32) {
+        let (width, height) = self.page_size.dimensions();
+        if self.landscape {
+            (height, width)
+        } else {
+            (width, height)
+        }
+    }
+
+    pub fn replace_all(&mut self, search: &str, replacement: &str) -> usize {
+        if search.is_empty() {
+            return 0;
+        }
+        let matches: Vec<usize> = self
+            .text
+            .match_indices(search)
+            .map(|(byte, _)| byte)
+            .collect();
+        if matches.is_empty() {
+            return 0;
+        }
+
+        self.last_text_edit = None;
+        for byte in matches.iter().rev().copied() {
+            let end = byte + search.len();
+            let style = self.style_at(byte);
+            let before = self.text.clone();
+            self.text.replace_range(byte..end, replacement);
+            self.reconcile_editor_change(&before, style);
+        }
+        matches.len()
+    }
+
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
-        let (text, formats, font_size) = if has_wordmock_extension(path) {
+        let (
+            text,
+            formats,
+            font_size,
+            font_family,
+            page_size,
+            landscape,
+            margin,
+            line_spacing,
+            alignment,
+        ) = if has_wordmock_extension(path) {
             let saved: SavedDocument = serde_json::from_slice(&fs::read(path)?)
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-            if saved.format_version != 1 {
+            if !matches!(saved.format_version, 1 | 2) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
@@ -263,9 +459,29 @@ impl Document {
                 ));
             }
             validate_saved_document(&saved)?;
-            (saved.text, saved.formats, saved.font_size)
+            (
+                saved.text,
+                saved.formats,
+                saved.font_size,
+                saved.font_family,
+                saved.page_size,
+                saved.landscape,
+                saved.margin,
+                saved.line_spacing,
+                saved.alignment,
+            )
         } else {
-            (fs::read_to_string(path)?, Vec::new(), 12.0)
+            (
+                fs::read_to_string(path)?,
+                Vec::new(),
+                12.0,
+                default_font_family(),
+                PageSize::Letter,
+                false,
+                default_margin(),
+                default_line_spacing(),
+                ParagraphAlignment::Left,
+            )
         };
 
         Ok(Self {
@@ -274,6 +490,12 @@ impl Document {
             path: Some(path.to_path_buf()),
             dirty: false,
             font_size,
+            font_family,
+            page_size,
+            landscape,
+            margin,
+            line_spacing,
+            alignment,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             last_text_edit: None,
@@ -304,10 +526,16 @@ impl Document {
     fn write(&self, path: &Path) -> io::Result<()> {
         if has_wordmock_extension(path) {
             let saved = SavedDocument {
-                format_version: 1,
+                format_version: 2,
                 text: self.text.clone(),
                 formats: self.formats.clone(),
                 font_size: self.font_size,
+                font_family: self.font_family.clone(),
+                page_size: self.page_size,
+                landscape: self.landscape,
+                margin: self.margin,
+                line_spacing: self.line_spacing,
+                alignment: self.alignment,
             };
             let bytes = serde_json::to_vec_pretty(&saved)
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -324,7 +552,7 @@ impl Document {
             if cursor < span.start {
                 runs.push((cursor, span.start, CharacterStyle::default()));
             }
-            runs.push((span.start, span.end, span.style));
+            runs.push((span.start, span.end, span.style.clone()));
             cursor = span.end;
         }
         if cursor < self.text.len() {
@@ -338,6 +566,12 @@ impl Document {
             text: self.text.clone(),
             formats: self.formats.clone(),
             font_size: self.font_size,
+            font_family: self.font_family.clone(),
+            page_size: self.page_size,
+            landscape: self.landscape,
+            margin: self.margin,
+            line_spacing: self.line_spacing,
+            alignment: self.alignment,
         }
     }
 
@@ -366,6 +600,12 @@ impl Document {
         self.text = snapshot.text;
         self.formats = snapshot.formats;
         self.font_size = snapshot.font_size;
+        self.font_family = snapshot.font_family;
+        self.page_size = snapshot.page_size;
+        self.landscape = snapshot.landscape;
+        self.margin = snapshot.margin;
+        self.line_spacing = snapshot.line_spacing;
+        self.alignment = snapshot.alignment;
     }
 
     fn mark_changed(&mut self) {
@@ -376,7 +616,7 @@ impl Document {
 }
 
 impl CharacterStyle {
-    fn style(self, kind: StyleKind) -> bool {
+    fn style(&self, kind: StyleKind) -> bool {
         match kind {
             StyleKind::Bold => self.bold,
             StyleKind::Italic => self.italic,
@@ -399,11 +639,30 @@ fn has_wordmock_extension(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("wordmock"))
 }
 
+fn default_font_family() -> String {
+    "Roboto".to_owned()
+}
+
+fn default_margin() -> f32 {
+    76.0
+}
+
+fn default_line_spacing() -> f32 {
+    1.0
+}
+
 fn validate_saved_document(saved: &SavedDocument) -> io::Result<()> {
-    if !saved.font_size.is_finite() || !(6.0..=96.0).contains(&saved.font_size) {
+    if !saved.font_size.is_finite()
+        || !(6.0..=96.0).contains(&saved.font_size)
+        || !saved.margin.is_finite()
+        || !(24.0..=120.0).contains(&saved.margin)
+        || !saved.line_spacing.is_finite()
+        || !(1.0..=2.5).contains(&saved.line_spacing)
+        || !supported_font_family(&saved.font_family)
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "document font size must be between 6 and 96 points",
+            "document contains invalid font or page settings",
         ));
     }
     let mut previous_end = 0;
@@ -414,6 +673,15 @@ fn validate_saved_document(saved: &SavedDocument) -> io::Result<()> {
             || !saved.text.is_char_boundary(span.end)
             || span.start < previous_end
             || span.style.is_plain()
+            || span
+                .style
+                .font_size
+                .is_some_and(|size| !size.is_finite() || !(6.0..=96.0).contains(&size))
+            || span
+                .style
+                .font_family
+                .as_deref()
+                .is_some_and(|family| !supported_font_family(family))
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -423,6 +691,13 @@ fn validate_saved_document(saved: &SavedDocument) -> io::Result<()> {
         previous_end = span.end;
     }
     Ok(())
+}
+
+pub fn supported_font_family(family: &str) -> bool {
+    matches!(
+        family,
+        "System" | "Roboto" | "Open Sans" | "Lora" | "Roboto Mono"
+    )
 }
 
 fn clamp_range_to_char_boundaries(text: &str, range: Range<usize>) -> Range<usize> {
