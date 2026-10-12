@@ -5,15 +5,22 @@ A personal desktop word processor built in Rust. The project starts with the doc
 ## Current milestone
 
 - Native desktop window with a page-like writing surface and ribbon tabs
-- Editable text with bold, italic, and underline character formatting
+- Font family, size, bold, italic, underline, text color, highlight, and clear-formatting controls
+- Bundled Roboto, Open Sans, Lora, and Roboto Mono fonts from Google Fonts
+- Paragraph alignment, line spacing, bullets, and numbering
+- Letter, A4, and Legal page sizes, orientation, and adjustable margins
+- Insert date/time, hyperlinks, page-break markers, and editable tab-separated text tables
+- Find/replace, word count, and character count
 - Undo and redo, including grouped typing and formatting changes
 - Adjustable display size and zoom
-- Word count and an estimated page count
 - Open `.wordmock`, `.txt`, and `.md` files; save formatted `.wordmock` documents or export plain text
-- `Cmd/Ctrl+N`, `Cmd/Ctrl+O`, `Cmd/Ctrl+S`, `Cmd/Ctrl+Z`, `Cmd/Ctrl+Shift+Z`, and `Cmd/Ctrl+B/I/U` shortcuts
+- `Cmd/Ctrl+N`, `Cmd/Ctrl+O`, `Cmd/Ctrl+S`, `Cmd/Ctrl+F`, `Cmd/Ctrl+Z`, `Cmd/Ctrl+Shift+Z`, and `Cmd/Ctrl+B/I/U` shortcuts
 - Save, discard, or cancel before replacing an unsaved document
 
-WordMock documents store text, character-format ranges, and font size in a versioned JSON format. Saving as `.txt` or `.md` exports only the text.
+WordMock documents store text, character-format ranges, and page settings in a versioned JSON format. Saving as `.txt` or `.md` exports only the text.
+
+The bundled fonts are distributed under the SIL Open Font License. Their license texts ship in `assets/fonts` and are copied into the installed macOS app bundle.
+Sources: [Roboto](https://github.com/google/fonts/tree/main/ofl/roboto), [Open Sans](https://github.com/google/fonts/tree/main/ofl/opensans), [Lora](https://github.com/google/fonts/tree/main/ofl/lora), and [Roboto Mono](https://github.com/google/fonts/tree/main/ofl/robotomono).
 
 ## Run
 
@@ -32,9 +39,6 @@ open ~/Applications/WordMock.app
 
 ## Roadmap
 
-1. Build paragraph-aware editing with line and paragraph styles.
-2. Implement real page layout, margins, headers, footers, and print/export.
-3. Add `.docx` import/export and preserve common Word formatting.
-4. Add tables, images, lists, find/replace, spelling tools, and accessibility.
+See [the detailed phase plan](docs/PHASE_2_PLAN.md) for delivered tools and the next implementation steps.
 
-The Insert, Layout, and Review ribbon tabs are still placeholders. Bold uses an installed system font when one is available; italic and underline are rendered by the editor.
+This release's page-break tool inserts a visible text marker, and its table tool inserts editable tab-separated text. True page breaks and grid tables require the structured document model described in the plan. Images, headers/footers, print export, `.docx`, spelling, and tracked changes remain future work.
